@@ -1,4 +1,3 @@
-import { AlertTriangle, BadgeCheck } from 'lucide-react'
 import { useState } from 'react'
 import type { JobResult } from '../api/client'
 import { api } from '../api/client'
@@ -62,31 +61,11 @@ export function ResultsView({ jobId, result }: { jobId: string; result: JobResul
                   {formatTime(turn.start)}
                 </span>
                 <div>
-                  <span className="flex items-center gap-1.5">
-                    <span
-                      className="text-xs font-semibold"
-                      style={{ color: speakerColor(turn.speaker, speakers) }}
-                    >
-                      {turn.speaker}
-                    </span>
-                    {turn.uncertain && (
-                      <span
-                        className="flex items-center gap-1 text-xs text-(--color-warning)"
-                        title="This turn is long and content-dense enough that a speaker change may have been missed — the whole span could actually be two speakers."
-                      >
-                        <AlertTriangle size={12} />
-                        uncertain
-                      </span>
-                    )}
-                    {turn.reviewed && (
-                      <span
-                        className="flex items-center gap-1 text-xs text-(--color-fg-muted)"
-                        title="This turn was long/complex enough to flag automatically, but an independent voice-similarity check found no evidence of a missed speaker change."
-                      >
-                        <BadgeCheck size={12} />
-                        reviewed
-                      </span>
-                    )}
+                  <span
+                    className="text-xs font-semibold"
+                    style={{ color: speakerColor(turn.speaker, speakers) }}
+                  >
+                    {turn.speaker}
                   </span>
                   <p className="text-sm">{turn.text}</p>
                 </div>

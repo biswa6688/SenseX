@@ -5,13 +5,32 @@ segment) to the diarization turn whose interval contains the word's
 midpoint, then re-group consecutive same-speaker words into speaker turns.
 Word-level assignment gives materially better speaker-boundary accuracy
 than segment-level overlap, without a separate forced-alignment model.
+
+Gap words (not covered by any diarization turn — pyannote turns rarely
+tile the audio with zero gaps) are resolved by embedding, not by time,
+when an embedding model + audio are available (see DECISIONS.md #18):
+verified on real audio (ground truth from an independent transcript)
+that a short confirming word like "Perfect." spoken by one speaker was
+getting glued onto the END of the OTHER speaker's preceding turn purely
+because it was closer in time — assigning it by comparing its own voice
+against both adjacent turns' voices instead fixes that class of error.
+Falls back to time-nearest when no embedding model is available or the
+gap is too short to embed meaningfully.
 """
 
 from typing import TypedDict
 
+import numpy as np
+import torch
+
 from app.pipeline.confidence import count_sentences, score_turn_confidence
 from app.pipeline.diarize import SpeakerTurn
 from app.pipeline.stt import Word
+
+# A gap segment shorter than this can't be embedded meaningfully (too few
+# samples for the embedding model to produce a reliable vector) — falls
+# back to time-nearest instead.
+MIN_GAP_EMBED_SECONDS = 0.3
 
 
 class DiarizedTurn(TypedDict):
@@ -29,26 +48,109 @@ class DiarizedTurn(TypedDict):
     reviewed: bool
 
 
-def _find_speaker(word: Word, turns: list[SpeakerTurn]) -> str:
-    """Assign the word to whichever diarization turn contains its midpoint;
-    if it falls in a gap between turns (pyannote turns rarely tile the
-    audio with zero gaps — short pauses, breaths, and overlap-resolution
-    all leave slivers), fall back to the nearest turn by distance instead
-    of "unknown". A silence gap belongs to whichever speaker is talking
-    on either side of it, not to a phantom extra speaker."""
-    if not turns:
-        return "unknown"
-    midpoint = (word["start"] + word["end"]) / 2
+def _nearest_turn_speaker(midpoint: float, turns: list[SpeakerTurn]) -> str | None:
     nearest_speaker = None
     nearest_distance = None
     for turn in turns:
-        if turn["start"] <= midpoint <= turn["end"]:
-            return turn["speaker"]
         distance = turn["start"] - midpoint if midpoint < turn["start"] else midpoint - turn["end"]
         if nearest_distance is None or distance < nearest_distance:
             nearest_distance = distance
             nearest_speaker = turn["speaker"]
-    return nearest_speaker if nearest_speaker is not None else "unknown"
+    return nearest_speaker
+
+
+def _embed_span(embedding_model, audio: np.ndarray, sample_rate: int, start: float, end: float) -> np.ndarray | None:
+    s = max(0, int(start * sample_rate))
+    e = min(len(audio), int(end * sample_rate))
+    if e - s < int(MIN_GAP_EMBED_SECONDS * sample_rate):
+        return None
+    chunk = audio[s:e]
+    waveform = torch.from_numpy(chunk).unsqueeze(0).unsqueeze(0)  # (1, 1, samples), matches boundary_refinement.py
+    embedding = embedding_model(waveform)[0]
+    norm = np.linalg.norm(embedding)
+    return embedding / norm if norm > 1e-8 else None
+
+
+def _classify_gap(
+    embedding_model,
+    audio: np.ndarray,
+    sample_rate: int,
+    gap_start: float,
+    gap_end: float,
+    prev_turn: SpeakerTurn | None,
+    next_turn: SpeakerTurn | None,
+) -> str | None:
+    """Resolves a gap by comparing its own voice against whichever of the
+    two adjacent turns actually differ in speaker — cheaper and more
+    locally relevant than building a full speaker centroid. Returns None
+    if it can't decide (too short to embed, or an adjacent turn's own
+    span is too short to embed), letting the caller fall back to
+    time-nearest."""
+    if prev_turn is None:
+        return next_turn["speaker"] if next_turn else None
+    if next_turn is None:
+        return prev_turn["speaker"]
+    if prev_turn["speaker"] == next_turn["speaker"]:
+        return prev_turn["speaker"]  # no ambiguity — both sides agree
+
+    gap_embedding = _embed_span(embedding_model, audio, sample_rate, gap_start, gap_end)
+    prev_embedding = _embed_span(embedding_model, audio, sample_rate, prev_turn["start"], prev_turn["end"])
+    next_embedding = _embed_span(embedding_model, audio, sample_rate, next_turn["start"], next_turn["end"])
+    if gap_embedding is None or prev_embedding is None or next_embedding is None:
+        return None
+
+    similarity_to_prev = float(np.dot(gap_embedding, prev_embedding))
+    similarity_to_next = float(np.dot(gap_embedding, next_embedding))
+    return prev_turn["speaker"] if similarity_to_prev >= similarity_to_next else next_turn["speaker"]
+
+
+def _assign_speakers(
+    words: list[Word],
+    turns: list[SpeakerTurn],
+    embedding_model,
+    audio: np.ndarray | None,
+    sample_rate: int | None,
+) -> list[str]:
+    """One speaker label per word in `words`, same order. Words covered by
+    a turn get that turn's speaker directly; words falling in a gap are
+    grouped into contiguous runs and resolved together (see
+    _classify_gap), not word-by-word — a run of gap words is one
+    utterance, not independent samples."""
+    sorted_turns = sorted(turns, key=lambda t: t["start"])
+    covering: list[SpeakerTurn | None] = []
+    for word in words:
+        midpoint = (word["start"] + word["end"]) / 2
+        match = next((t for t in sorted_turns if t["start"] <= midpoint <= t["end"]), None)
+        covering.append(match)
+
+    speakers: list[str | None] = [t["speaker"] if t else None for t in covering]
+
+    can_embed = embedding_model is not None and audio is not None and sample_rate is not None
+    i = 0
+    while i < len(words):
+        if speakers[i] is not None:
+            i += 1
+            continue
+        j = i
+        while j < len(words) and speakers[j] is None:
+            j += 1
+        # words[i:j] is one contiguous gap run
+        gap_start, gap_end = words[i]["start"], words[j - 1]["end"]
+        prev_turn = next((t for t in reversed(sorted_turns) if t["end"] <= gap_start), None)
+        next_turn = next((t for t in sorted_turns if t["start"] >= gap_end), None)
+
+        resolved = None
+        if can_embed:
+            resolved = _classify_gap(embedding_model, audio, sample_rate, gap_start, gap_end, prev_turn, next_turn)
+        if resolved is None:
+            midpoint = (gap_start + gap_end) / 2
+            resolved = _nearest_turn_speaker(midpoint, sorted_turns) or "unknown"
+
+        for k in range(i, j):
+            speakers[k] = resolved
+        i = j
+
+    return [s if s is not None else "unknown" for s in speakers]
 
 
 def _finalize_turn(turn: DiarizedTurn) -> DiarizedTurn:
@@ -64,15 +166,27 @@ def _finalize_turn(turn: DiarizedTurn) -> DiarizedTurn:
     return turn
 
 
-def merge_transcript(words: list[Word], turns: list[SpeakerTurn]) -> list[DiarizedTurn]:
+def merge_transcript(
+    words: list[Word],
+    turns: list[SpeakerTurn],
+    embedding_model=None,
+    audio: np.ndarray | None = None,
+    sample_rate: int | None = None,
+) -> list[DiarizedTurn]:
+    """embedding_model/audio/sample_rate are optional — when provided
+    (jobs.py passes them once the diarization embedding is available),
+    gap words are resolved by voice instead of by time (see module
+    docstring). Without them, falls back to pure time-nearest, same as
+    before."""
     if not words:
         return []
+
+    word_speakers = _assign_speakers(words, turns, embedding_model, audio, sample_rate)
 
     merged: list[DiarizedTurn] = []
     current: DiarizedTurn | None = None
 
-    for word in words:
-        speaker = _find_speaker(word, turns)
+    for word, speaker in zip(words, word_speakers):
         if current is not None and current["speaker"] == speaker:
             current["end"] = word["end"]
             current["text"] += word["word"]

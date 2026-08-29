@@ -67,20 +67,26 @@ def run_audio_pipeline(job, set_stage) -> dict:
     checkpoint(diarizing)
     turns = diarize.diarize(canonical_audio_path)
 
+    # Prefers 3D-Speaker (an independently-trained embedding — verified on
+    # real audio to catch speaker changes community-1's own embedding
+    # space couldn't, see DECISIONS.md #17), falling back to reusing the
+    # diarization pipeline's own embedding if 3D-Speaker fails to load
+    # (e.g. offline on first download). Acquired before merging so gap
+    # words (see merge.py's module docstring, DECISIONS.md #18) are
+    # resolved by voice from the first pass, not just during refinement.
+    embedding_model = three_d_speaker.get_embedding_model() or diarize.get_embedding_model()
+    audio, sample_rate = (boundary_refinement.read_mono(canonical_audio_path) if embedding_model else (None, None))
+
     checkpoint(merging)
-    diarized = merge.merge_transcript(transcript["words"], turns)
+    diarized = merge.merge_transcript(transcript["words"], turns, embedding_model, audio, sample_rate)
 
     # Turn-boundary refinement (Phase 8, see boundary_refinement.py): only
-    # runs if confidence.py flagged something. Prefers 3D-Speaker (an
-    # independently-trained embedding — verified on real audio to catch
-    # splits community-1's own embedding space couldn't, see
-    # DECISIONS.md #17), falling back to reusing the diarization
-    # pipeline's own embedding if 3D-Speaker fails to load (e.g. offline
-    # on first download).
-    embedding_model = three_d_speaker.get_embedding_model() or diarize.get_embedding_model()
-    if embedding_model is not None and any(t["uncertain"] for t in diarized):
+    # runs if a turn needs a check (confidence.py flagged it, or it's just
+    # long enough to be worth verifying regardless — see
+    # boundary_refinement.needs_boundary_check, DECISIONS.md #18).
+    if embedding_model is not None and any(boundary_refinement.needs_boundary_check(t) for t in diarized):
         diarized = boundary_refinement.refine_transcript(
-            embedding_model, canonical_audio_path, transcript["words"], turns, diarized
+            embedding_model, audio, sample_rate, transcript["words"], turns, diarized
         )
 
     diarized_text = merge.format_for_llm(diarized)

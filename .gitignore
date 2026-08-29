@@ -1,0 +1,21 @@
+node_modules/
+dist/
+build/
+.env
+.env.local
+
+# ml-service
+ml-service/.venv/
+ml-service/__pycache__/
+**/__pycache__/
+*.pyc
+
+# runtime data
+storage/
+!storage/.gitkeep
+
+# editors/OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

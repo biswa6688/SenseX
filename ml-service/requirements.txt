@@ -1,0 +1,17 @@
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+python-multipart==0.0.32
+pydantic==2.13.5
+pydantic-settings==2.15.0
+
+# --- ML deps: CPU-only. torch installed separately from the CPU wheel index:
+# pip install torch --index-url https://download.pytorch.org/whl/cpu
+torch==2.13.0+cpu
+faster-whisper==1.2.1
+ctranslate2==4.8.1
+pyannote.audio==4.0.7
+llama-cpp-python==0.3.35
+huggingface_hub==1.29.0
+numpy==2.5.2
+soundfile==0.14.0
+pydub==0.25.1

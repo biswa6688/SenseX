@@ -9,6 +9,7 @@ than segment-level overlap, without a separate forced-alignment model.
 
 from typing import TypedDict
 
+from app.pipeline.confidence import count_sentences, score_turn_confidence
 from app.pipeline.diarize import SpeakerTurn
 from app.pipeline.stt import Word
 
@@ -18,6 +19,8 @@ class DiarizedTurn(TypedDict):
     end: float
     speaker: str
     text: str
+    confidence: float
+    uncertain: bool
 
 
 def _find_speaker(word: Word, turns: list[SpeakerTurn]) -> str:
@@ -42,6 +45,18 @@ def _find_speaker(word: Word, turns: list[SpeakerTurn]) -> str:
     return nearest_speaker if nearest_speaker is not None else "unknown"
 
 
+def _finalize_turn(turn: DiarizedTurn) -> DiarizedTurn:
+    """Scores confidence now that the turn's full span/text is known —
+    see confidence.py. This is what surfaces the "long region that's
+    actually two speakers, merged because segmentation missed the
+    boundary" failure mode instead of silently presenting it as fact."""
+    duration = turn["end"] - turn["start"]
+    result = score_turn_confidence(duration, count_sentences(turn["text"]))
+    turn["confidence"] = result.confidence
+    turn["uncertain"] = result.uncertain
+    return turn
+
+
 def merge_transcript(words: list[Word], turns: list[SpeakerTurn]) -> list[DiarizedTurn]:
     if not words:
         return []
@@ -56,15 +71,17 @@ def merge_transcript(words: list[Word], turns: list[SpeakerTurn]) -> list[Diariz
             current["text"] += word["word"]
         else:
             if current is not None:
-                merged.append(current)
+                merged.append(_finalize_turn(current))
             current = {
                 "start": word["start"],
                 "end": word["end"],
                 "speaker": speaker,
                 "text": word["word"],
+                "confidence": 1.0,
+                "uncertain": False,
             }
     if current is not None:
-        merged.append(current)
+        merged.append(_finalize_turn(current))
     return merged
 
 

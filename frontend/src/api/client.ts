@@ -28,6 +28,8 @@ export interface DiarizedTurn {
   end: number
   speaker: string
   text: string
+  confidence: number
+  uncertain: boolean
 }
 
 export interface QaCriterion {

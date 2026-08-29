@@ -66,6 +66,21 @@ REASSIGN_THRESHOLD = 0.65
 # A pause at least this long before the run is treated as maximally
 # supportive of a genuine turn change.
 FULL_PAUSE_SECONDS = 1.0
+# Below this, the acoustic signal isn't just "unconvinced" — it actively
+# favors staying with the CURRENT speaker. Verified on real audio: a
+# genuine misjudgment from the linguistic LLM ("Actually, that slot" —
+# a clear sentence continuation, not a backchannel — scored as 1.0) plus
+# a coincidental mid-monologue pause cleared REASSIGN_THRESHOLD on their
+# own even though the acoustic embedding (0.205, meaning the run's own
+# voice matched the CURRENT speaker's reference far better than the
+# candidate other speaker's) was flatly against it. Unlike linguistic/
+# pause/position, which are soft contextual heuristics, acoustic is the
+# only signal grounded in the run's own voice — a confident disagreement
+# from it should veto a reassignment outright, not just get outvoted by
+# the weighted sum. Only blocks (never promotes): a neutral or missing
+# acoustic reading (>= this) never triggers the veto and the weighted
+# sum decides normally.
+ACOUSTIC_VETO_THRESHOLD = 0.35
 
 
 def _linguistic_score(text: str) -> float:
@@ -167,6 +182,8 @@ def _combined_score(
     acoustic = 0.5
     if can_embed:
         acoustic = _acoustic_score(embedding_model, audio, sample_rate, span_start, span_end, current_ref, other_ref)
+        if acoustic < ACOUSTIC_VETO_THRESHOLD:
+            return 0.0  # the run's own voice actively disagrees — veto regardless of the other signals
     return (
         WEIGHT_LINGUISTIC * linguistic
         + WEIGHT_POSITION * position

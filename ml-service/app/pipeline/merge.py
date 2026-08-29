@@ -104,7 +104,16 @@ def _assign_speakers(
     covering: list[SpeakerTurn | None] = []
     for word in words:
         midpoint = (word["start"] + word["end"]) / 2
-        match = next((t for t in sorted_turns if t["start"] <= midpoint <= t["end"]), None)
+        candidates = [t for t in sorted_turns if t["start"] <= midpoint <= t["end"]]
+        # pyannote turns can genuinely overlap (a short interjection from one
+        # speaker nested inside a longer turn from another) — picking the
+        # first by start order always favors whichever turn started earliest,
+        # silently discarding the other speaker's real, shorter turn every
+        # time. The narrowest covering turn is the most specific match for
+        # this exact word, so prefer that instead. Verified on real audio: a
+        # 0.63s SPEAKER_01 turn nested inside a 0.95s SPEAKER_00 turn was
+        # being swallowed entirely before this fix (see DECISIONS.md #21).
+        match = min(candidates, key=lambda t: t["end"] - t["start"], default=None)
         covering.append(match)
 
     speakers: list[str | None] = [t["speaker"] if t else None for t in covering]

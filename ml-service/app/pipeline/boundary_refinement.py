@@ -25,10 +25,10 @@ find a boundary no matter how many rounds run.
 
 import numpy as np
 import soundfile as sf
-import torch
 
 from app.pipeline import merge
 from app.pipeline.diarize import SpeakerTurn
+from app.pipeline.embedding_utils import embed_span
 from app.pipeline.merge import DiarizedTurn
 from app.pipeline.stt import Word
 
@@ -64,18 +64,6 @@ def read_mono(audio_path: str) -> tuple[np.ndarray, int]:
     return audio[:, 0], sample_rate
 
 
-def _embed_window(embedding_model, audio: np.ndarray, sample_rate: int, start: float, end: float) -> np.ndarray | None:
-    s = max(0, int(start * sample_rate))
-    e = min(len(audio), int(end * sample_rate))
-    if e - s < int(0.3 * sample_rate):  # too short to embed meaningfully
-        return None
-    chunk = audio[s:e]
-    waveform = torch.from_numpy(chunk).unsqueeze(0).unsqueeze(0)  # (1, 1, samples)
-    embedding = embedding_model(waveform)[0]
-    norm = np.linalg.norm(embedding)
-    return embedding / norm if norm > 1e-8 else None
-
-
 def _find_best_boundary(
     embedding_model, audio: np.ndarray, sample_rate: int, start: float, end: float
 ) -> float | None:
@@ -87,7 +75,7 @@ def _find_best_boundary(
     if len(window_starts) < 2:
         return None
 
-    embeddings = [_embed_window(embedding_model, audio, sample_rate, ws, ws + WINDOW_SECONDS) for ws in window_starts]
+    embeddings = [embed_span(embedding_model, audio, sample_rate, ws, ws + WINDOW_SECONDS) for ws in window_starts]
 
     best_index = None
     best_similarity = 1.0
@@ -115,7 +103,7 @@ def _speaker_centroids(
     sums: dict[str, np.ndarray] = {}
     counts: dict[str, int] = {}
     for turn in confident_turns:
-        emb = _embed_window(embedding_model, audio, sample_rate, turn["start"], turn["end"])
+        emb = embed_span(embedding_model, audio, sample_rate, turn["start"], turn["end"])
         if emb is None:
             continue
         sums[turn["speaker"]] = sums.get(turn["speaker"], np.zeros_like(emb)) + emb
@@ -189,8 +177,8 @@ def refine_diarization_turns(
             checked_no_split_spans.append((turn["start"], turn["end"]))
             continue
 
-        left_embedding = _embed_window(embedding_model, audio, sample_rate, turn["start"], boundary)
-        right_embedding = _embed_window(embedding_model, audio, sample_rate, boundary, turn["end"])
+        left_embedding = embed_span(embedding_model, audio, sample_rate, turn["start"], boundary)
+        right_embedding = embed_span(embedding_model, audio, sample_rate, boundary, turn["end"])
         left_speaker = _nearest_speaker(left_embedding, centroids, turn["speaker"])
         right_speaker = _nearest_speaker(right_embedding, centroids, turn["speaker"])
         if left_speaker == right_speaker:

@@ -21,16 +21,12 @@ gap is too short to embed meaningfully.
 from typing import TypedDict
 
 import numpy as np
-import torch
 
+from app.pipeline import short_turn_resolver
 from app.pipeline.confidence import count_sentences, score_turn_confidence
 from app.pipeline.diarize import SpeakerTurn
+from app.pipeline.embedding_utils import embed_span
 from app.pipeline.stt import Word
-
-# A gap segment shorter than this can't be embedded meaningfully (too few
-# samples for the embedding model to produce a reliable vector) — falls
-# back to time-nearest instead.
-MIN_GAP_EMBED_SECONDS = 0.3
 
 
 class DiarizedTurn(TypedDict):
@@ -59,18 +55,6 @@ def _nearest_turn_speaker(midpoint: float, turns: list[SpeakerTurn]) -> str | No
     return nearest_speaker
 
 
-def _embed_span(embedding_model, audio: np.ndarray, sample_rate: int, start: float, end: float) -> np.ndarray | None:
-    s = max(0, int(start * sample_rate))
-    e = min(len(audio), int(end * sample_rate))
-    if e - s < int(MIN_GAP_EMBED_SECONDS * sample_rate):
-        return None
-    chunk = audio[s:e]
-    waveform = torch.from_numpy(chunk).unsqueeze(0).unsqueeze(0)  # (1, 1, samples), matches boundary_refinement.py
-    embedding = embedding_model(waveform)[0]
-    norm = np.linalg.norm(embedding)
-    return embedding / norm if norm > 1e-8 else None
-
-
 def _classify_gap(
     embedding_model,
     audio: np.ndarray,
@@ -93,9 +77,9 @@ def _classify_gap(
     if prev_turn["speaker"] == next_turn["speaker"]:
         return prev_turn["speaker"]  # no ambiguity — both sides agree
 
-    gap_embedding = _embed_span(embedding_model, audio, sample_rate, gap_start, gap_end)
-    prev_embedding = _embed_span(embedding_model, audio, sample_rate, prev_turn["start"], prev_turn["end"])
-    next_embedding = _embed_span(embedding_model, audio, sample_rate, next_turn["start"], next_turn["end"])
+    gap_embedding = embed_span(embedding_model, audio, sample_rate, gap_start, gap_end)
+    prev_embedding = embed_span(embedding_model, audio, sample_rate, prev_turn["start"], prev_turn["end"])
+    next_embedding = embed_span(embedding_model, audio, sample_rate, next_turn["start"], next_turn["end"])
     if gap_embedding is None or prev_embedding is None or next_embedding is None:
         return None
 
@@ -176,12 +160,17 @@ def merge_transcript(
     """embedding_model/audio/sample_rate are optional — when provided
     (jobs.py passes them once the diarization embedding is available),
     gap words are resolved by voice instead of by time (see module
-    docstring). Without them, falls back to pure time-nearest, same as
-    before."""
+    docstring), and short sandwiched word runs are re-checked via
+    short_turn_resolver.py (multi-signal — see its module docstring for
+    why sub-1.5s spans need more than just an embedding check). Without
+    them, falls back to pure time-nearest gap resolution and no
+    short-run correction."""
     if not words:
         return []
 
     word_speakers = _assign_speakers(words, turns, embedding_model, audio, sample_rate)
+    if embedding_model is not None and audio is not None and sample_rate is not None:
+        word_speakers = short_turn_resolver.resolve_short_runs(words, word_speakers, embedding_model, audio, sample_rate)
 
     merged: list[DiarizedTurn] = []
     current: DiarizedTurn | None = None

@@ -9,7 +9,7 @@ from fastapi.responses import StreamingResponse
 
 from app.core.config import settings
 from app.core.job_queue import PIPELINE_STAGES, Job, JobCancelled, JobStatus, job_queue
-from app.pipeline import diarize, llm_analysis, merge, stt, tts
+from app.pipeline import audio_preprocess, diarize, llm_analysis, merge, stt, tts
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -53,11 +53,19 @@ def run_audio_pipeline(job, set_stage) -> dict:
     original_path.write_bytes(source_path.read_bytes())
     audio_path = str(original_path)
 
+    # Canonicalize once here rather than letting STT (PyAV) and diarization
+    # (torchcodec) each independently decode the original file through
+    # different codec libraries — see audio_preprocess.py.
+    canonical_path = job.dir() / "canonical.wav"
+    audio_metadata = audio_preprocess.canonicalize_audio(audio_path, canonical_path)
+    (job.dir() / "audio_metadata.json").write_text(json.dumps(audio_metadata.to_dict(), indent=2))
+    canonical_audio_path = str(canonical_path)
+
     checkpoint(transcribing)
-    transcript = stt.transcribe(audio_path)
+    transcript = stt.transcribe(canonical_audio_path)
 
     checkpoint(diarizing)
-    turns = diarize.diarize(audio_path)
+    turns = diarize.diarize(canonical_audio_path)
 
     checkpoint(merging)
     diarized = merge.merge_transcript(transcript["words"], turns)

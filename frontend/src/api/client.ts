@@ -30,6 +30,7 @@ export interface DiarizedTurn {
   text: string
   confidence: number
   uncertain: boolean
+  reviewed: boolean
 }
 
 export interface QaCriterion {

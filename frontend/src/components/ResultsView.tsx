@@ -1,4 +1,4 @@
-import { AlertTriangle } from 'lucide-react'
+import { AlertTriangle, BadgeCheck } from 'lucide-react'
 import { useState } from 'react'
 import type { JobResult } from '../api/client'
 import { api } from '../api/client'
@@ -76,6 +76,15 @@ export function ResultsView({ jobId, result }: { jobId: string; result: JobResul
                       >
                         <AlertTriangle size={12} />
                         uncertain
+                      </span>
+                    )}
+                    {turn.reviewed && (
+                      <span
+                        className="flex items-center gap-1 text-xs text-(--color-fg-muted)"
+                        title="This turn was long/complex enough to flag automatically, but an independent voice-similarity check found no evidence of a missed speaker change."
+                      >
+                        <BadgeCheck size={12} />
+                        reviewed
                       </span>
                     )}
                   </span>

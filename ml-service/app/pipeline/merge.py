@@ -21,6 +21,12 @@ class DiarizedTurn(TypedDict):
     text: str
     confidence: float
     uncertain: bool
+    # True once boundary_refinement.py has actually re-checked this turn
+    # with an independent embedding signal and found no evidence of a
+    # missed speaker change — distinct from "uncertain=False" turns that
+    # were simply short/simple enough to never get flagged in the first
+    # place. See apply_review_results() below and DECISIONS.md #16.
+    reviewed: bool
 
 
 def _find_speaker(word: Word, turns: list[SpeakerTurn]) -> str:
@@ -54,6 +60,7 @@ def _finalize_turn(turn: DiarizedTurn) -> DiarizedTurn:
     result = score_turn_confidence(duration, count_sentences(turn["text"]))
     turn["confidence"] = result.confidence
     turn["uncertain"] = result.uncertain
+    turn["reviewed"] = False
     return turn
 
 
@@ -79,10 +86,36 @@ def merge_transcript(words: list[Word], turns: list[SpeakerTurn]) -> list[Diariz
                 "text": word["word"],
                 "confidence": 1.0,
                 "uncertain": False,
+                "reviewed": False,
             }
     if current is not None:
         merged.append(_finalize_turn(current))
     return merged
+
+
+# Confidence assigned to a turn that boundary_refinement.py actually
+# checked and found no contradicting evidence for — high enough to clear
+# the `uncertain` threshold (see confidence.py), but deliberately not 1.0:
+# it's corroborated by a second signal, not verified ground truth (see
+# DECISIONS.md #16, "never fabricate certainty").
+REVIEWED_NO_SPLIT_CONFIDENCE = 0.65
+
+
+def apply_review_results(turns: list[DiarizedTurn], checked_no_split_spans: list[tuple[float, float]]) -> None:
+    """Mutates `turns` in place: for any turn whose span was independently
+    re-checked by boundary_refinement.py and found to have no evidence of
+    a missed speaker change, clears the `uncertain` flag it got purely
+    from the duration/sentence-count heuristic and marks it reviewed —
+    otherwise a turn that WAS checked and passed still shows the same
+    unexplained "uncertain" warning as one that was never checked at all
+    (see DECISIONS.md #16)."""
+    for turn in turns:
+        for span_start, span_end in checked_no_split_spans:
+            if turn["start"] >= span_start and turn["end"] <= span_end:
+                turn["reviewed"] = True
+                turn["uncertain"] = False
+                turn["confidence"] = max(turn["confidence"], REVIEWED_NO_SPLIT_CONFIDENCE)
+                break
 
 
 def format_for_llm(turns: list[DiarizedTurn]) -> str:

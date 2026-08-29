@@ -114,28 +114,42 @@ def refine_diarization_turns(
     audio_path: str,
     raw_turns: list[SpeakerTurn],
     diarized_turns: list[DiarizedTurn],
-) -> list[SpeakerTurn]:
-    """Returns a possibly-modified copy of raw_turns (the pyannote-level
-    turn timeline, before word-level merge) with an extra split inserted
-    for each uncertain diarized turn where a clear boundary candidate was
-    found. Caller should re-run merge.merge_transcript() with the result
-    to get correctly re-split text/confidence — this only touches the
-    speaker-turn timeline, not transcript text."""
+) -> tuple[list[SpeakerTurn], list[tuple[float, float]]]:
+    """Returns (refined_raw_turns, checked_no_split_spans).
+
+    refined_raw_turns: a possibly-modified copy of raw_turns (the
+    pyannote-level turn timeline, before word-level merge) with an extra
+    split inserted for each uncertain diarized turn where a clear
+    boundary candidate was found. Caller should re-run
+    merge.merge_transcript() with it to get correctly re-split
+    text/confidence — this only touches the speaker-turn timeline, not
+    transcript text.
+
+    checked_no_split_spans: (start, end) of every uncertain turn that WAS
+    independently re-checked but found no evidence of a missed speaker
+    change (no candidate boundary, or a candidate whose two halves both
+    matched the same known speaker). Caller should pass this to
+    merge.apply_review_results() after re-merging, so a turn that was
+    checked-and-passed doesn't keep showing the same unexplained
+    "uncertain" warning as one that was never checked (see
+    DECISIONS.md #16)."""
     uncertain = [t for t in diarized_turns if t["uncertain"]]
     if not uncertain:
-        return raw_turns
+        return raw_turns, []
 
     confident = [t for t in diarized_turns if not t["uncertain"]]
     audio, sample_rate = _read_mono(audio_path)
     if sample_rate != embedding_model.sample_rate:
-        return raw_turns  # shouldn't happen (canonical audio is 16kHz) — bail safely rather than embed garbage
+        return raw_turns, []  # shouldn't happen (canonical audio is 16kHz) — bail safely rather than embed garbage
 
     centroids = _speaker_centroids(embedding_model, audio, sample_rate, confident)
 
     refined = list(raw_turns)
+    checked_no_split_spans: list[tuple[float, float]] = []
     for turn in uncertain:
         boundary = _find_best_boundary(embedding_model, audio, sample_rate, turn["start"], turn["end"])
         if boundary is None:
+            checked_no_split_spans.append((turn["start"], turn["end"]))
             continue
 
         left_embedding = _embed_window(embedding_model, audio, sample_rate, turn["start"], boundary)
@@ -143,7 +157,9 @@ def refine_diarization_turns(
         left_speaker = _nearest_speaker(left_embedding, centroids, turn["speaker"])
         right_speaker = _nearest_speaker(right_embedding, centroids, turn["speaker"])
         if left_speaker == right_speaker:
-            continue  # re-embedding agrees with the original single-speaker call; nothing to change
+            # re-embedding agrees with the original single-speaker call; nothing to change
+            checked_no_split_spans.append((turn["start"], turn["end"]))
+            continue
 
         # Replace whichever raw diarization turns this span overlaps with a clean two-piece split.
         refined = [t for t in refined if not (t["start"] < turn["end"] and t["end"] > turn["start"])]
@@ -151,4 +167,4 @@ def refine_diarization_turns(
         refined.append({"start": boundary, "end": turn["end"], "speaker": right_speaker})
 
     refined.sort(key=lambda t: t["start"])
-    return refined
+    return refined, checked_no_split_spans

@@ -79,11 +79,9 @@ def run_audio_pipeline(job, set_stage) -> dict:
     # on first download).
     embedding_model = three_d_speaker.get_embedding_model() or diarize.get_embedding_model()
     if embedding_model is not None and any(t["uncertain"] for t in diarized):
-        refined_turns, checked_no_split_spans = boundary_refinement.refine_diarization_turns(
-            embedding_model, canonical_audio_path, turns, diarized
+        diarized = boundary_refinement.refine_transcript(
+            embedding_model, canonical_audio_path, transcript["words"], turns, diarized
         )
-        diarized = merge.merge_transcript(transcript["words"], refined_turns)
-        merge.apply_review_results(diarized, checked_no_split_spans)
 
     diarized_text = merge.format_for_llm(diarized)
 

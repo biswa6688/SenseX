@@ -1,26 +1,31 @@
 """Turn-boundary refinement via short-window re-embedding.
 
-Reuses the diarization pipeline's OWN already-loaded embedding model (see
-diarize.get_embedding_model()) — no new dependency, no new RAM — to
-independently re-check turns confidence.py flagged as suspicious: long,
+Independently re-checks turns confidence.py flagged as suspicious: long,
 content-dense turns that are exactly the observed failure mode
 (pyannote's segmentation missing a speaker change; see DECISIONS.md #13).
+Embedding source is caller-supplied — jobs.py prefers three_d_speaker.py
+(an independent model, see DECISIONS.md #17), falling back to
+diarize.get_embedding_model() (reusing the diarization pipeline's own
+embedding, see DECISIONS.md #15) if that's unavailable.
 
-Only runs on flagged turns, not the whole recording. Finds at most one
-additional boundary per flagged turn (the single strongest similarity
-drop between adjacent short windows) — doesn't attempt to recover
-multiple missed boundaries within one turn. This is a bounded first
-pass, not a guarantee (see DECISIONS.md #15): it reuses the same
-embedding space as the first diarization pass, so it can't catch cases
-where that embedding space itself can't distinguish the two speakers.
+Only runs on flagged turns, not the whole recording. refine_diarization_turns()
+finds at most one boundary per call (the single strongest similarity drop
+between adjacent short windows); refine_transcript() calls it repeatedly
+(bounded by MAX_REFINEMENT_ROUNDS) so a split's remainder — still long
+enough to re-flag uncertain — gets its own chance to be checked instead
+of being left as a fresh, never-reviewed turn. This is a bounded process,
+not a guarantee: an embedding source that can't distinguish two speakers
+in a given recording won't find a boundary no matter how many rounds run.
 """
 
 import numpy as np
 import soundfile as sf
 import torch
 
+from app.pipeline import merge
 from app.pipeline.diarize import SpeakerTurn
 from app.pipeline.merge import DiarizedTurn
+from app.pipeline.stt import Word
 
 WINDOW_SECONDS = 2.0
 HOP_SECONDS = 0.5
@@ -30,6 +35,13 @@ SIMILARITY_DROP_THRESHOLD = 0.5
 # A candidate boundary must leave at least this much audio on each side
 # to be worth splitting on — avoids degenerate near-edge splits.
 MIN_SEGMENT_SECONDS = 1.5
+# refine_transcript() re-checks newly-created uncertain turns (a split
+# leaves a remainder that can still be long enough to re-flag) up to this
+# many rounds — bounded so a genuinely long single-speaker monologue
+# doesn't get pathologically subdivided chasing an uncertain flag that
+# will never clear. Matches the DIARIZATION_MAX_ATTEMPTS=3 precedent in
+# diarize.py.
+MAX_REFINEMENT_ROUNDS = 3
 
 
 def _read_mono(audio_path: str) -> tuple[np.ndarray, int]:
@@ -168,3 +180,33 @@ def refine_diarization_turns(
 
     refined.sort(key=lambda t: t["start"])
     return refined, checked_no_split_spans
+
+
+def refine_transcript(
+    embedding_model,
+    audio_path: str,
+    words: list[Word],
+    turns: list[SpeakerTurn],
+    diarized: list[DiarizedTurn],
+) -> list[DiarizedTurn]:
+    """Repeatedly calls refine_diarization_turns() + re-merges, so a split's
+    remainder (still long enough to re-flag uncertain) gets its own chance
+    to be checked instead of being left as a fresh, never-reviewed
+    "uncertain" turn — bounded by MAX_REFINEMENT_ROUNDS. Applies
+    merge.apply_review_results() once at the end across every round's
+    checked-no-split spans (a span that wasn't split stays intact through
+    later rounds, so accumulating and applying at the end is safe)."""
+    all_checked_no_split_spans: list[tuple[float, float]] = []
+
+    for _ in range(MAX_REFINEMENT_ROUNDS):
+        if not any(t["uncertain"] for t in diarized):
+            break
+        refined_turns, checked_no_split_spans = refine_diarization_turns(embedding_model, audio_path, turns, diarized)
+        all_checked_no_split_spans.extend(checked_no_split_spans)
+        if refined_turns == turns:
+            break  # no split happened this round; further rounds would repeat the same result
+        turns = refined_turns
+        diarized = merge.merge_transcript(words, turns)
+
+    merge.apply_review_results(diarized, all_checked_no_split_spans)
+    return diarized

@@ -1,9 +1,9 @@
-# IntelliSense — agent context
+# SenseX — agent context
 
 Read ARCHITECTURE.md and DECISIONS.md before making structural changes. Don't re-litigate decisions logged in DECISIONS.md — they were explicitly chosen by the user, not defaults.
 
 ## Fast facts
-- Brand: IntelliSense, AI-motif SVG icon (hand-authored, not sourced externally).
+- Brand: SenseX, AI-motif SVG icon (hand-authored, not sourced externally).
 - Three independent apps, NO monorepo tooling: `backend/` (NestJS+TS), `frontend/` (React+TS+Vite), `ml-service/` (Python 3.13 FastAPI). Each has its own package manager state — install/run independently.
 - `ml-service` uses `.venv` on **Python 3.13** (not the also-installed 3.14 — no ML wheels for it yet).
 - ML inference (STT/TTS/diarization/LLM) lives ONLY in `ml-service`. NestJS never runs models itself, only orchestrates via HTTP.

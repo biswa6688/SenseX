@@ -18,7 +18,7 @@ interface ThemeState {
   setMode: (mode: ThemeMode) => void
 }
 
-const STORAGE_KEY = 'intellisense-theme'
+const STORAGE_KEY = 'sensex-theme'
 
 const initialMode = (localStorage.getItem(STORAGE_KEY) as ThemeMode | null) ?? 'system'
 applyTheme(initialMode)

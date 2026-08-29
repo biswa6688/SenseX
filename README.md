@@ -1,4 +1,4 @@
-# IntelliSense
+# SenseX
 
 Audio intelligence app: Speech-to-Text, Text-to-Speech, Summary, Sentiment, QA Ratings, full Transcript, Speaker Diarization. CPU-only, tuned to run on 16GB RAM.
 

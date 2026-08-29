@@ -7,7 +7,7 @@ async function bootstrap() {
   app.enableCors();
 
   const config = new DocumentBuilder()
-    .setTitle('IntelliSense API')
+    .setTitle('SenseX API')
     .setDescription('Orchestration API — proxies the ml-service for STT/TTS/diarization/summary/sentiment/QA')
     .setVersion('0.1')
     .build();

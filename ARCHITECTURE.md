@@ -1,4 +1,4 @@
-# IntelliSense — Architecture
+# SenseX — Architecture
 
 Full-stack audio-intelligence app: STT, TTS, Summary, Sentiment, QA Ratings, Transcript, Speaker Diarization. CPU-only, 16GB RAM target machine, best accuracy/speed tradeoff achievable under that constraint.
 

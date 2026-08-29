@@ -16,7 +16,7 @@ export function Layout() {
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3">
           <NavLink to="/" className="flex items-center gap-2">
             <Logo size={28} />
-            <span className="text-lg font-semibold tracking-tight">IntelliSense</span>
+            <span className="text-lg font-semibold tracking-tight">SenseX</span>
           </NavLink>
           <nav className="flex items-center gap-1">
             {NAV.map(({ to, label, end }) => (

@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from app.core.job_queue import job_queue
 from app.routers import jobs, models, tts
 
-app = FastAPI(title="IntelliSense ML Service")
+app = FastAPI(title="SenseX ML Service")
 
 app.include_router(jobs.router)
 app.include_router(models.router)

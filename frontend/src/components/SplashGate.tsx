@@ -2,7 +2,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { useEffect, useState, type ReactNode } from 'react'
 import { Logo } from './Logo'
 
-const SESSION_KEY = 'intellisense-splash-shown'
+const SESSION_KEY = 'sensex-splash-shown'
 const SPLASH_MS = 5000
 
 export function SplashGate({ children }: { children: ReactNode }) {
@@ -39,7 +39,7 @@ export function SplashGate({ children }: { children: ReactNode }) {
               transition={{ delay: 0.3, duration: 0.5 }}
               className="brand-gradient-text text-3xl font-semibold tracking-tight"
             >
-              IntelliSense
+              SenseX
             </motion.h1>
           </motion.div>
         )}

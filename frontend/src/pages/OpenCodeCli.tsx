@@ -15,7 +15,7 @@ export function OpenCodeCli() {
         <div>
           <h1 className="text-3xl font-semibold tracking-tight">OpenCode CLI</h1>
           <p className="text-(--color-fg-muted)">
-            The open-source terminal agent — an independent project, not built by IntelliSense.
+            The open-source terminal agent — an independent project, not built by SenseX.
           </p>
         </div>
       </div>

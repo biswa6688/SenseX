@@ -10,7 +10,7 @@ Resolved product/architecture questions, in order asked. See ARCHITECTURE.md for
 
 4. **TTS scope**: BOTH (a) pipeline stage reading the generated Summary aloud, and (b) a standalone free-text-to-speech tool in the Playground, unrelated to uploaded-audio analysis. *Why*: user wants both, not either/or.
 
-5. **OpenCode CLI page**: external project — page links to the official upstream OpenCode CLI GitHub releases per platform. No backend hosting/build pipeline, no NestJS module needed for it. *Why*: user confirmed it's the third-party open-source project, IntelliSense doesn't own/ship it.
+5. **OpenCode CLI page**: external project — page links to the official upstream OpenCode CLI GitHub releases per platform. No backend hosting/build pipeline, no NestJS module needed for it. *Why*: user confirmed it's the third-party open-source project, SenseX doesn't own/ship it.
 
 6. **Docker**: not used for local dev v1. *Why*: Docker Desktop's WSL2 backend defaults to capping the VM at ~50% of host RAM (8GB on this 16GB machine) — would break the ~10GB model-loading budget unless `.wslconfig` manually raised. Native installs are also easier to debug for torch/ctranslate2/llama-cpp-python build issues on Windows. Revisit later purely for *distribution* (docker-compose for other users), not dev.
 

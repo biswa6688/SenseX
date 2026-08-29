@@ -1,10 +1,26 @@
-export type JobStatusValue = 'queued' | 'processing' | 'completed' | 'failed'
+export type JobStatusValue = 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled'
 
 export interface JobStatus {
   jobId: string
   status: JobStatusValue
   stage: string | null
   error: string | null
+  stages: string[]
+  elapsedSeconds: number | null
+  etaSeconds: number | null
+  queuePosition: number | null
+  queueLength: number | null
+}
+
+export interface JobHistoryEntry {
+  id: string
+  kind: string
+  status: JobStatusValue
+  stage: string | null
+  error: string | null
+  createdAt: number
+  updatedAt: number
+  stageDurations: Record<string, number>
 }
 
 export interface DiarizedTurn {
@@ -52,10 +68,15 @@ export const api = {
   jobStatus: (jobId: string): Promise<JobStatus> =>
     fetch(`/api/audio-jobs/${jobId}`).then(json),
 
+  jobStatusStreamUrl: (jobId: string) => `/api/audio-jobs/${jobId}/stream`,
+
   jobResult: (jobId: string): Promise<JobResult> =>
     fetch(`/api/audio-jobs/${jobId}/result`).then(json),
 
-  jobHistory: (): Promise<Record<string, unknown>[]> => fetch('/api/audio-jobs').then(json),
+  jobHistory: (): Promise<JobHistoryEntry[]> => fetch('/api/audio-jobs').then(json),
+
+  cancelJob: (jobId: string): Promise<JobStatus> =>
+    fetch(`/api/audio-jobs/${jobId}/cancel`, { method: 'POST' }).then(json),
 
   originalAudioUrl: (jobId: string) => `/api/audio-jobs/${jobId}/audio/original`,
   summaryAudioUrl: (jobId: string) => `/api/audio-jobs/${jobId}/audio/summary`,

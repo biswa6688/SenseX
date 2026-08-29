@@ -5,6 +5,7 @@ import { ThemeToggle } from './ThemeToggle'
 const NAV = [
   { to: '/', label: 'Home', end: true },
   { to: '/playground', label: 'Playground' },
+  { to: '/jobs', label: 'Jobs' },
   { to: '/models', label: 'Models' },
   { to: '/opencode-cli', label: 'OpenCode CLI' },
 ]

@@ -30,9 +30,12 @@ export function Models() {
               <div className="flex items-center gap-2">
                 <span className="font-medium">{model.name}</span>
                 {model.downloaded && <CheckCircle2 size={16} className="text-(--color-success)" />}
+                {model.requiresAuth && model.downloaded && (
+                  <span className="text-xs text-(--color-success)">Diarization validated</span>
+                )}
               </div>
               <p className="text-xs text-(--color-fg-muted)">{model.repo}</p>
-              {model.requiresAuth && (
+              {model.requiresAuth && !model.downloaded && (
                 <p className="mt-1 flex items-start gap-1.5 text-xs text-(--color-warning)">
                   <ShieldAlert size={14} className="mt-0.5 shrink-0" />
                   {model.authNote}
@@ -40,19 +43,26 @@ export function Models() {
               )}
             </div>
 
-            {!model.downloaded && !model.requiresAuth && (
-              <button
-                onClick={() => download.mutate(model.id)}
-                disabled={download.isPending && download.variables === model.id}
-                className="brand-gradient flex shrink-0 items-center gap-2 rounded-full px-4 py-2 text-sm font-medium text-(--color-brand-fg) disabled:opacity-50"
-              >
-                {download.isPending && download.variables === model.id ? (
-                  <Loader2 className="animate-spin" size={14} />
-                ) : (
-                  <DownloadCloud size={14} />
+            {!model.downloaded && (
+              <div className="flex shrink-0 flex-col items-end gap-1.5">
+                <button
+                  onClick={() => download.mutate(model.id)}
+                  disabled={download.isPending && download.variables === model.id}
+                  className="brand-gradient flex items-center gap-2 rounded-full px-4 py-2 text-sm font-medium text-(--color-brand-fg) disabled:opacity-50"
+                >
+                  {download.isPending && download.variables === model.id ? (
+                    <Loader2 className="animate-spin" size={14} />
+                  ) : (
+                    <DownloadCloud size={14} />
+                  )}
+                  {model.requiresAuth ? 'Validate' : 'Download'}
+                </button>
+                {download.isError && download.variables === model.id && (
+                  <p className="max-w-56 text-right text-xs text-(--color-danger)">
+                    {String(download.error)}
+                  </p>
                 )}
-                Download
-              </button>
+              </div>
             )}
           </div>
         ))}

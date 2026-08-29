@@ -81,13 +81,20 @@ def _do_download(model_id: str) -> None:
             )
 
     elif model_id == "diarization":
-        raise HTTPException(
-            409,
-            "diarization model is gated: accept the license at "
-            f"https://huggingface.co/{settings.diarization_model} and set "
-            "HF_TOKEN in ml-service/.env, then it downloads automatically "
-            "on first diarization run.",
-        )
+        from app.pipeline.diarize import validate_pipeline
+
+        # Not a real "download" — this is a validation probe: try to load the
+        # gated pipeline (token + accepted license) in the same dedicated
+        # subprocess diarize() actually uses (see diarize.py), which also
+        # warms/confirms the local HF cache and touches the .complete marker
+        # on success.
+        if not validate_pipeline():
+            raise HTTPException(
+                409,
+                "diarization model is gated: accept the license at "
+                f"https://huggingface.co/{settings.diarization_model} and set "
+                "HF_TOKEN in ml-service/.env, then click Validate again.",
+            )
     else:
         raise HTTPException(404, "unknown model id")
 

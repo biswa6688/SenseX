@@ -21,7 +21,7 @@ storage/       shared runtime data (uploads, job results, model cache) — gitig
 - Node.js 20+, npm
 - Python 3.13 (not 3.14 — no ML wheels for it yet)
 - ffmpeg on PATH (required for decoding non-WAV audio uploads) — not yet installed on this machine, install via winget/choco first
-- A free HuggingFace account + accepted license for `pyannote/speaker-diarization-3.1`, with a token set as `HF_TOKEN` in `ml-service/.env` (required for diarization; cannot be automated)
+- A free HuggingFace account + accepted license for `pyannote/speaker-diarization-community-1`, with a token set as `HF_TOKEN` in `ml-service/.env` (required for diarization; cannot be automated)
 
 ### Backend
 ```

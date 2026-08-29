@@ -12,6 +12,7 @@ app.include_router(tts.router)
 
 @app.on_event("startup")
 async def on_startup() -> None:
+    job_queue.reconcile_orphaned_sidecars()
     job_queue.start()
     # TODO (Phase 2): eager-load whisper/diarization/llm/piper singletons here
     # so first request isn't cold. See PLAN.md RAM budget (~10GB all loaded).

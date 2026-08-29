@@ -1,39 +1,72 @@
+import asyncio
 import json
+import time
 from pathlib import Path
+from typing import AsyncIterator
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 
 from app.core.config import settings
-from app.core.job_queue import JobStatus, job_queue
+from app.core.job_queue import PIPELINE_STAGES, Job, JobCancelled, JobStatus, job_queue
 from app.pipeline import diarize, llm_analysis, merge, stt, tts
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
+
+# How often the SSE stream re-checks and re-emits a job's status. Short
+# enough that the UI's elapsed-time/ETA display ticks smoothly, cheap enough
+# (single-user, in-memory job lookup) that busy-waiting at this interval
+# costs nothing measurable.
+STREAM_POLL_INTERVAL_SECONDS = 1.0
+
+
+def _status_payload(job: Job) -> dict:
+    return {
+        "jobId": job.id,
+        "status": job.status,
+        "stage": job.stage,
+        "error": job.error,
+        "stages": PIPELINE_STAGES,
+        "elapsedSeconds": time.time() - job.created_at if job.status == JobStatus.PROCESSING else None,
+        "etaSeconds": job_queue.estimate_remaining_seconds(job),
+        "queuePosition": job_queue.queue_position(job.id) if job.status == JobStatus.QUEUED else None,
+        "queueLength": job_queue.queue_length() if job.status == JobStatus.QUEUED else None,
+    }
 
 
 def run_audio_pipeline(job, set_stage) -> dict:
     """Synchronous by design — run via asyncio.to_thread in job_queue's
     worker, not awaited directly, so this CPU-blocking work never freezes
     the event loop (see job_queue.py)."""
-    set_stage("staging")
+    staging, transcribing, diarizing, merging, analyzing, synthesizing = PIPELINE_STAGES
+
+    def checkpoint(stage: str) -> None:
+        """Advance to `stage`, unless cancellation was requested — cancellation
+        is only checked between stages (see JobCancelled), not mid-stage."""
+        if job.cancel_requested:
+            raise JobCancelled()
+        set_stage(stage)
+
+    checkpoint(staging)
     source_path = Path(job.payload["filePath"])
     original_path = job.dir() / f"original{source_path.suffix}"
     original_path.write_bytes(source_path.read_bytes())
     audio_path = str(original_path)
 
-    set_stage("transcribing")
+    checkpoint(transcribing)
     transcript = stt.transcribe(audio_path)
 
-    set_stage("diarizing")
+    checkpoint(diarizing)
     turns = diarize.diarize(audio_path)
 
-    set_stage("merging")
+    checkpoint(merging)
     diarized = merge.merge_transcript(transcript["words"], turns)
     diarized_text = merge.format_for_llm(diarized)
 
-    set_stage("analyzing")
+    checkpoint(analyzing)
     analysis = llm_analysis.analyze(diarized_text)
 
-    set_stage("synthesizing")
+    checkpoint(synthesizing)
     summary_wav = job.dir() / "summary.wav"
     tts.synthesize(analysis["summary"], summary_wav)
 
@@ -64,7 +97,47 @@ async def get_job_status(job_id: str):
     job = job_queue.get(job_id)
     if job is None:
         raise HTTPException(404, "job not found")
-    return {"jobId": job.id, "status": job.status, "stage": job.stage, "error": job.error}
+    return _status_payload(job)
+
+
+@router.get("/{job_id}/stream")
+async def stream_job_status(job_id: str):
+    """Server-Sent Events version of GET /{job_id} — pushes a status
+    snapshot roughly once a second over one long-lived connection instead
+    of the client re-polling, and closes the stream itself once the job
+    reaches a terminal state so the client doesn't need to."""
+    job = job_queue.get(job_id)
+    if job is None:
+        raise HTTPException(404, "job not found")
+
+    async def event_stream() -> AsyncIterator[str]:
+        while True:
+            current = job_queue.get(job_id)
+            if current is None:
+                yield f"event: error\ndata: {json.dumps({'error': 'job not found'})}\n\n"
+                return
+            payload = _status_payload(current)
+            yield f"data: {json.dumps(payload)}\n\n"
+            if current.status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
+                return
+            await asyncio.sleep(STREAM_POLL_INTERVAL_SECONDS)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.post("/{job_id}/cancel")
+async def cancel_job(job_id: str):
+    job = job_queue.get(job_id)
+    if job is None:
+        raise HTTPException(404, "job not found")
+    cancelled = job_queue.cancel(job_id)
+    if not cancelled:
+        raise HTTPException(409, f"job is {job.status}, cannot cancel")
+    return _status_payload(job)
 
 
 @router.get("/{job_id}/result")

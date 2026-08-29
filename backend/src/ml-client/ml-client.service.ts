@@ -5,9 +5,14 @@ import { firstValueFrom } from 'rxjs';
 
 export interface MlJobStatus {
   jobId: string;
-  status: 'queued' | 'processing' | 'completed' | 'failed';
+  status: 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
   stage: string | null;
   error: string | null;
+  stages: string[];
+  elapsedSeconds: number | null;
+  etaSeconds: number | null;
+  queuePosition: number | null;
+  queueLength: number | null;
 }
 
 export interface MlModelInfo {
@@ -42,8 +47,23 @@ export class MlClientService {
     return data;
   }
 
+  /** Raw SSE byte stream from ml-service — piped straight through to the
+   * frontend response rather than re-parsed/re-emitted, so the backend
+   * stays a dumb proxy for this one (see audio-jobs.controller.ts). */
+  async streamJobStatus(jobId: string) {
+    const { data } = await firstValueFrom(
+      this.http.get(`${this.baseUrl}/jobs/${jobId}/stream`, { responseType: 'stream' }),
+    );
+    return data as NodeJS.ReadableStream;
+  }
+
   async getJobResult(jobId: string): Promise<Record<string, unknown>> {
     const { data } = await firstValueFrom(this.http.get(`${this.baseUrl}/jobs/${jobId}/result`));
+    return data;
+  }
+
+  async cancelJob(jobId: string): Promise<MlJobStatus> {
+    const { data } = await firstValueFrom(this.http.post(`${this.baseUrl}/jobs/${jobId}/cancel`));
     return data;
   }
 

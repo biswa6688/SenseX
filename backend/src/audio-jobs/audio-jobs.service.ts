@@ -1,4 +1,5 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { HttpException, Injectable, NotFoundException } from '@nestjs/common';
+import { AxiosError } from 'axios';
 import { createReadStream, existsSync } from 'node:fs';
 import { MlClientService, MlJobStatus } from '../ml-client/ml-client.service.js';
 import { StorageService } from '../storage/storage.service.js';
@@ -19,8 +20,26 @@ export class AudioJobsService {
     return this.mlClient.getJobStatus(jobId);
   }
 
+  async streamStatus(jobId: string): Promise<NodeJS.ReadableStream> {
+    return this.mlClient.streamJobStatus(jobId);
+  }
+
   async result(jobId: string): Promise<Record<string, unknown>> {
     return this.mlClient.getJobResult(jobId);
+  }
+
+  async cancel(jobId: string): Promise<MlJobStatus> {
+    try {
+      return await this.mlClient.cancelJob(jobId);
+    } catch (err) {
+      // Surface ml-service's real status/message (e.g. 409 "job is completed,
+      // cannot cancel") instead of Nest's default opaque 500 for an
+      // unhandled AxiosError.
+      if (err instanceof AxiosError && err.response) {
+        throw new HttpException(err.response.data, err.response.status);
+      }
+      throw err;
+    }
   }
 
   /** History via the shared filesystem — ml-service's job.json sidecar is

@@ -44,7 +44,7 @@ NestJS writes uploaded audio into shared `storage/`, then calls `POST /jobs` wit
 
 ### Pipeline (per audio job), see `app/pipeline/`
 1. `stt.py` — faster-whisper transcription, `word_timestamps=True`. Model: `distil-large-v3` (English-tuned, ~5.8x faster than large-v3 at ~99% of its accuracy). Swap to `large-v3-turbo` (multilingual) via `WHISPER_MODEL` env var if non-English audio is needed — pure config change.
-2. `diarize.py` — pyannote/speaker-diarization-3.1, CPU. **Gated HF model** — requires manual one-time HF account + license acceptance + `HF_TOKEN` in `ml-service/.env`. Cannot be auto-bundled.
+2. `diarize.py` — pyannote/speaker-diarization-community-1 (VBxClustering, own segmentation/embedding/PLDA weights — NOT speaker-diarization-3.1, swapped after 3.1 proved unstable on real audio, see DECISIONS.md #13), CPU. **Gated HF model** — requires manual one-time HF account + license acceptance + `HF_TOKEN` in `ml-service/.env`. Cannot be auto-bundled. `diarization_num_speakers` defaults to 2 (agent + customer).
 3. `merge.py` — **word-level** merge: each word assigned to the diarization turn containing its midpoint, then re-grouped into speaker turns. This (not segment-level overlap) is what gives good speaker-boundary accuracy without a separate forced-alignment model (avoids WhisperX-style extra wav2vec2 weights — no RAM budget for that).
 4. `llm_analysis.py` — **one combined LLM call** (not three separate calls) returns `{summary, sentiment, qaRatings}` as one JSON object. Model: Qwen2.5-3B-Instruct, GGUF Q4_K_M, via llama-cpp-python. Combined call avoids re-processing a long transcript prompt 3x — prompt-eval dominates CPU cost. Long calls (>~40-50min) need map-reduce chunking before the final structured pass (not yet implemented — TODO).
 5. `tts.py` — Piper, invoked as a **subprocess** (piper CLI binary), not the `piper-tts` pip binding (less stable/consistently packaged historically). Used two ways: (a) pipeline stage synthesizing the generated Summary, (b) standalone `/tts` endpoint for arbitrary free text.
@@ -58,7 +58,7 @@ QA Ratings rubric (placeholder, confirm with stakeholder): Greeting, Active List
 | NestJS process | ~0.3 GB |
 | Python base (torch/ctranslate2 import overhead) | ~1.5 GB |
 | faster-whisper distil-large-v3 int8 | ~1.5 GB |
-| pyannote speaker-diarization-3.1 | ~1.5 GB |
+| pyannote speaker-diarization-community-1 | ~1.5 GB |
 | Qwen2.5-3B GGUF Q4_K_M (n_ctx≈8192) | ~3.0 GB |
 | Piper | ~0.3 GB |
 | **Subtotal, all loaded simultaneously** | **~10.1 GB** |

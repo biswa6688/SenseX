@@ -21,11 +21,25 @@ class DiarizedTurn(TypedDict):
 
 
 def _find_speaker(word: Word, turns: list[SpeakerTurn]) -> str:
+    """Assign the word to whichever diarization turn contains its midpoint;
+    if it falls in a gap between turns (pyannote turns rarely tile the
+    audio with zero gaps — short pauses, breaths, and overlap-resolution
+    all leave slivers), fall back to the nearest turn by distance instead
+    of "unknown". A silence gap belongs to whichever speaker is talking
+    on either side of it, not to a phantom extra speaker."""
+    if not turns:
+        return "unknown"
     midpoint = (word["start"] + word["end"]) / 2
+    nearest_speaker = None
+    nearest_distance = None
     for turn in turns:
         if turn["start"] <= midpoint <= turn["end"]:
             return turn["speaker"]
-    return "unknown"
+        distance = turn["start"] - midpoint if midpoint < turn["start"] else midpoint - turn["end"]
+        if nearest_distance is None or distance < nearest_distance:
+            nearest_distance = distance
+            nearest_speaker = turn["speaker"]
+    return nearest_speaker if nearest_speaker is not None else "unknown"
 
 
 def merge_transcript(words: list[Word], turns: list[SpeakerTurn]) -> list[DiarizedTurn]:

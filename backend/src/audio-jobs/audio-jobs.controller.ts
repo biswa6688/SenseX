@@ -36,9 +36,29 @@ export class AudioJobsController {
     return this.audioJobs.status(id);
   }
 
+  @Get(':id/stream')
+  @ApiOperation({ summary: 'Server-Sent Events job status stream (replaces client-side polling)' })
+  async streamStatus(@Param('id') id: string, @Res() res: Response) {
+    const upstream = await this.audioJobs.streamStatus(id);
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+    upstream.pipe(res);
+    res.req.on('close', () => {
+      if ('destroy' in upstream && typeof upstream.destroy === 'function') upstream.destroy();
+    });
+  }
+
   @Get(':id/result')
   result(@Param('id') id: string) {
     return this.audioJobs.result(id);
+  }
+
+  @Post(':id/cancel')
+  @ApiOperation({ summary: 'Cancel a queued or in-progress job (best-effort — stops at the next pipeline stage boundary)' })
+  cancel(@Param('id') id: string) {
+    return this.audioJobs.cancel(id);
   }
 
   @Get(':id/audio/original')

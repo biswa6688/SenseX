@@ -15,3 +15,14 @@ huggingface_hub==1.29.0
 numpy==2.5.2
 soundfile==0.14.0
 pydub==0.25.1
+
+# --- 3D-Speaker embedding backend (turn-boundary refinement, see
+# DECISIONS.md #17). modelscope pulls a large transitive dependency
+# stack; addict/datasets/simplejson are undeclared transitive deps
+# modelscope's own import chain needs but doesn't list — pin them
+# explicitly rather than relying on pip resolving them incidentally.
+modelscope==1.39.1
+funasr==1.4.6
+datasets==5.0.1
+addict==2.4.0
+simplejson==4.1.2

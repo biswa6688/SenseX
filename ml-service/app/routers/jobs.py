@@ -9,7 +9,7 @@ from fastapi.responses import StreamingResponse
 
 from app.core.config import settings
 from app.core.job_queue import PIPELINE_STAGES, Job, JobCancelled, JobStatus, job_queue
-from app.pipeline import audio_preprocess, boundary_refinement, diarize, llm_analysis, merge, stt, tts
+from app.pipeline import audio_preprocess, boundary_refinement, diarize, llm_analysis, merge, stt, three_d_speaker, tts
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -71,9 +71,13 @@ def run_audio_pipeline(job, set_stage) -> dict:
     diarized = merge.merge_transcript(transcript["words"], turns)
 
     # Turn-boundary refinement (Phase 8, see boundary_refinement.py): only
-    # runs if confidence.py flagged something, reuses the diarization
-    # pipeline's own already-loaded embedding model — no new model load.
-    embedding_model = diarize.get_embedding_model()
+    # runs if confidence.py flagged something. Prefers 3D-Speaker (an
+    # independently-trained embedding — verified on real audio to catch
+    # splits community-1's own embedding space couldn't, see
+    # DECISIONS.md #17), falling back to reusing the diarization
+    # pipeline's own embedding if 3D-Speaker fails to load (e.g. offline
+    # on first download).
+    embedding_model = three_d_speaker.get_embedding_model() or diarize.get_embedding_model()
     if embedding_model is not None and any(t["uncertain"] for t in diarized):
         refined_turns, checked_no_split_spans = boundary_refinement.refine_diarization_turns(
             embedding_model, canonical_audio_path, turns, diarized

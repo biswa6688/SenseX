@@ -87,6 +87,17 @@ def validate_pipeline() -> bool:
     return get_diarization_pipeline() is not None
 
 
+def get_embedding_model():
+    """The diarization pipeline's own speaker-embedding submodule
+    (pyannote.audio.pipelines.speaker_verification.PyannoteAudioPretrainedSpeakerEmbedding),
+    reused by boundary_refinement.py for turn-boundary refinement — no new
+    model load, no new RAM (see DECISIONS.md #15)."""
+    pipeline = get_diarization_pipeline()
+    if pipeline is None:
+        return None
+    return getattr(pipeline, "_embedding", None)
+
+
 def _audio_duration_seconds(audio_path: str) -> float:
     info = sf.info(audio_path)
     return info.frames / info.samplerate

@@ -195,7 +195,17 @@ def resolve_short_runs(
        "...Perfect." case: "Perfect." is not its own run at all, it's
        the tail of a much longer run, so pattern 1 alone never
        considers it). Only ever trims off a SUFFIX, never the whole
-       run — a run that's already short enough is pattern 1's job."""
+       run — a run that's already short enough is pattern 1's job.
+    3. The LEADING sub-span of a longer run, immediately preceded by a
+       different speaker's run — the mirror of pattern 2. Verified on
+       real audio: after long_turn_refiner.py finds a genuine internal
+       boundary and reclusters each side against speaker centroids, a
+       very short leading piece (too little audio for the acoustic
+       centroid alone to classify confidently, see DECISIONS.md #20)
+       can still land on the wrong side and get collapsed into the
+       following, larger, wrong-speaker segment — at that point it's
+       the HEAD of a long run, not its own run, so neither pattern 1
+       nor pattern 2 ever considers it. Only ever trims off a PREFIX."""
     if not words:
         return list(word_speakers)
 
@@ -287,6 +297,46 @@ def resolve_short_runs(
         )
         if combined >= REASSIGN_THRESHOLD:
             for k in range(candidate_start, end_i):
+                word_speakers[k] = other_speaker
+
+    # Pattern 3: leading sub-span of a longer run, preceded by a
+    # different speaker — mirror of pattern 2. Also evaluated against
+    # the ORIGINAL runs, so a run pattern 1 already reassigned in full
+    # doesn't get re-trimmed here.
+    for idx in range(1, len(runs)):
+        start_i, end_i, speaker = runs[idx]
+        prev_run = runs[idx - 1]
+        other_speaker = prev_run[2]
+        run_len = end_i - start_i
+        if other_speaker == speaker or other_speaker == "unknown" or run_len < 2:
+            continue
+
+        # Grow the leading candidate word-by-word while it still fits
+        # the short-span limits, keeping the largest valid span.
+        max_k = min(MAX_SHORT_RUN_WORDS, run_len - 1)
+        candidate_end = None
+        for k in range(1, max_k + 1):
+            trial_end = start_i + k
+            if words[trial_end - 1]["end"] - words[start_i]["start"] > MAX_SHORT_RUN_SECONDS:
+                break
+            candidate_end = trial_end
+        if candidate_end is None:
+            continue
+
+        span_start = words[start_i]["start"]
+        span_end = words[candidate_end - 1]["end"]
+        span_text = "".join(words[k]["word"] for k in range(start_i, candidate_end))
+        gap_before = span_start - words[start_i - 1]["end"] if start_i > 0 else 0.0
+
+        current_ref = (words[candidate_end]["start"], words[end_i - 1]["end"]) if candidate_end < end_i else None
+        other_ref = (words[prev_run[0]]["start"], words[prev_run[1] - 1]["end"])
+
+        combined = _combined_score(
+            span_text, 1.0, gap_before, embedding_model, audio, sample_rate, can_embed,
+            span_start, span_end, current_ref, other_ref,
+        )
+        if combined >= REASSIGN_THRESHOLD:
+            for k in range(start_i, candidate_end):
                 word_speakers[k] = other_speaker
 
     return word_speakers

@@ -1,4 +1,4 @@
-"""Turn-boundary refinement via short-window re-embedding.
+"""Turn-boundary refinement orchestration.
 
 Independently re-checks turns that are either flagged by confidence.py
 (long, content-dense — the "segmentation missed a boundary in a long
@@ -14,32 +14,26 @@ Embedding source is caller-supplied — jobs.py prefers three_d_speaker.py
 diarize.get_embedding_model() (reusing the diarization pipeline's own
 embedding, see DECISIONS.md #15) if that's unavailable.
 
-refine_diarization_turns() finds at most one boundary per call (the
-single strongest similarity drop between adjacent short windows);
-refine_transcript() calls it repeatedly (bounded by MAX_REFINEMENT_ROUNDS)
-so a split's remainder gets its own chance to be checked instead of being
-left unreviewed. This is a bounded process, not a guarantee: an embedding
-source that can't distinguish two speakers in a given recording won't
-find a boundary no matter how many rounds run.
+The actual boundary search is long_turn_refiner.py — genuine multi-
+boundary change-point detection (every local similarity-drop, not just
+the single strongest one), since a long turn can contain MORE THAN ONE
+missed speaker change (see DECISIONS.md #20). refine_transcript() calls
+refine_diarization_turns() repeatedly (bounded by MAX_REFINEMENT_ROUNDS)
+so a still-long remainder gets its own chance to be checked instead of
+being left unreviewed. This is a bounded process, not a guarantee: an
+embedding source that can't distinguish two speakers in a given
+recording won't find a boundary no matter how many rounds run.
 """
 
 import numpy as np
 import soundfile as sf
 
-from app.pipeline import merge
+from app.pipeline import long_turn_refiner, merge
 from app.pipeline.diarize import SpeakerTurn
 from app.pipeline.embedding_utils import embed_span
 from app.pipeline.merge import DiarizedTurn
 from app.pipeline.stt import Word
 
-WINDOW_SECONDS = 2.0
-HOP_SECONDS = 0.5
-# Below this cosine similarity between adjacent short windows is treated
-# as a candidate speaker-change point.
-SIMILARITY_DROP_THRESHOLD = 0.5
-# A candidate boundary must leave at least this much audio on each side
-# to be worth splitting on — avoids degenerate near-edge splits.
-MIN_SEGMENT_SECONDS = 1.5
 # Turns at least this long get a boundary check even if confidence.py
 # never flagged them — see module docstring: a real two-speaker merge can
 # be short enough to stay under confidence.py's duration/sentence
@@ -64,39 +58,6 @@ def read_mono(audio_path: str) -> tuple[np.ndarray, int]:
     return audio[:, 0], sample_rate
 
 
-def _find_best_boundary(
-    embedding_model, audio: np.ndarray, sample_rate: int, start: float, end: float
-) -> float | None:
-    window_starts = []
-    t = start
-    while t + WINDOW_SECONDS <= end:
-        window_starts.append(t)
-        t += HOP_SECONDS
-    if len(window_starts) < 2:
-        return None
-
-    embeddings = [embed_span(embedding_model, audio, sample_rate, ws, ws + WINDOW_SECONDS) for ws in window_starts]
-
-    best_index = None
-    best_similarity = 1.0
-    for i in range(len(embeddings) - 1):
-        a, b = embeddings[i], embeddings[i + 1]
-        if a is None or b is None:
-            continue
-        similarity = float(np.dot(a, b))
-        if similarity < best_similarity:
-            best_similarity = similarity
-            best_index = i
-
-    if best_index is None or best_similarity >= SIMILARITY_DROP_THRESHOLD:
-        return None
-
-    boundary = window_starts[best_index] + WINDOW_SECONDS / 2 + HOP_SECONDS / 2
-    if boundary - start < MIN_SEGMENT_SECONDS or end - boundary < MIN_SEGMENT_SECONDS:
-        return None
-    return boundary
-
-
 def _speaker_centroids(
     embedding_model, audio: np.ndarray, sample_rate: int, confident_turns: list[DiarizedTurn]
 ) -> dict[str, np.ndarray]:
@@ -109,19 +70,6 @@ def _speaker_centroids(
         sums[turn["speaker"]] = sums.get(turn["speaker"], np.zeros_like(emb)) + emb
         counts[turn["speaker"]] = counts.get(turn["speaker"], 0) + 1
     return {speaker: sums[speaker] / counts[speaker] for speaker in sums}
-
-
-def _nearest_speaker(embedding: np.ndarray | None, centroids: dict[str, np.ndarray], fallback: str) -> str:
-    if embedding is None or not centroids:
-        return fallback
-    best_speaker = fallback
-    best_similarity = -1.0
-    for speaker, centroid in centroids.items():
-        similarity = float(np.dot(embedding, centroid))
-        if similarity > best_similarity:
-            best_similarity = similarity
-            best_speaker = speaker
-    return best_speaker
 
 
 def refine_diarization_turns(
@@ -172,24 +120,14 @@ def refine_diarization_turns(
     refined = list(raw_turns)
     checked_no_split_spans: list[tuple[float, float]] = []
     for turn in candidates:
-        boundary = _find_best_boundary(embedding_model, audio, sample_rate, turn["start"], turn["end"])
-        if boundary is None:
+        segments = long_turn_refiner.refine_long_turn(embedding_model, audio, sample_rate, turn, centroids)
+        if segments is None:
             checked_no_split_spans.append((turn["start"], turn["end"]))
             continue
 
-        left_embedding = embed_span(embedding_model, audio, sample_rate, turn["start"], boundary)
-        right_embedding = embed_span(embedding_model, audio, sample_rate, boundary, turn["end"])
-        left_speaker = _nearest_speaker(left_embedding, centroids, turn["speaker"])
-        right_speaker = _nearest_speaker(right_embedding, centroids, turn["speaker"])
-        if left_speaker == right_speaker:
-            # re-embedding agrees with the original single-speaker call; nothing to change
-            checked_no_split_spans.append((turn["start"], turn["end"]))
-            continue
-
-        # Replace whichever raw diarization turns this span overlaps with a clean two-piece split.
+        # Replace whichever raw diarization turns this span overlaps with the multi-piece split.
         refined = [t for t in refined if not (t["start"] < turn["end"] and t["end"] > turn["start"])]
-        refined.append({"start": turn["start"], "end": boundary, "speaker": left_speaker})
-        refined.append({"start": boundary, "end": turn["end"], "speaker": right_speaker})
+        refined.extend(segments)
 
     refined.sort(key=lambda t: t["start"])
     return refined, checked_no_split_spans
